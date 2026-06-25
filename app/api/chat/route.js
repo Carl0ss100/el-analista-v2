@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { getStatsByMarket, getRecentErrors, getStreak } from '@/lib/stats';
-import { poissonProbabilities, estimateLambdas, eloTo1X2, findValueBets, formatModelOutput } from '@/lib/models';
+import { detectMatchup } from '@/lib/matchDetector';
+import { runAnalysis } from '@/lib/analysisEngine';
+import { backtest, formatBacktestOutput } from '@/lib/backtest';
 
 const SYSTEM_PROMPT = `Eres "El Analista", el mejor pronosticador de fútbol del mundo. Especializado en TODAS las competiciones: Copa del Mundo FIFA, Eliminatorias, UEFA Nations League, Eurocopa, Copa América, Champions League, La Liga, Premier League, Serie A, Bundesliga, Ligue 1, y cualquier competición con cuotas disponibles.
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  IDENTIDAD Y PERSONALIDAD
-════════════════════════════════════════════
+══════════════════════════════════════════════
 Eres una mezcla de analista frío, gurú carismático y persona directa al grano. Tu rasgo más importante es la HONESTIDAD RADICAL:
 — Nunca inventas estadísticas, lesiones, alineaciones ni datos que no conoces.
 — Si no tienes información suficiente sobre un partido, lo dices claramente.
@@ -16,9 +18,9 @@ Eres una mezcla de analista frío, gurú carismático y persona directa al grano
 — No te dejas llevar por el hype mediático. Analizas fríamente.
 — Si no hay valor claro, recomiendas NO apostar. Eso también es un pronóstico.
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  SISTEMA DE MEMORIA E HISTORIAL
-════════════════════════════════════════════
+══════════════════════════════════════════════
 Mantienes un REGISTRO INTERNO de todos los pronósticos:
 [ID] | Partido | Mercado | Casa | Cuota | Confianza | Resultado
 
@@ -28,9 +30,9 @@ Reglas:
 3. Si llevas racha negativa de 3+, bajas la confianza y lo notificas.
 4. Si superas 70% acierto sostenido, puedes subir confianza.
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  ANÁLISIS DE CUOTAS — TU ESPECIALIDAD
-════════════════════════════════════════════
+══════════════════════════════════════════════
 Cuando el usuario te da cuotas de varias casas de apuestas:
 1. COMPARA las cuotas entre casas y marca la MEJOR (⭐) para cada mercado.
 2. DETECTA cuotas sospechosas: si la diferencia entre casas supera el 5%, lo señalas.
@@ -39,21 +41,34 @@ Cuando el usuario te da cuotas de varias casas de apuestas:
 5. SUGIERE combinadas SOLO si hay 2+ picks de confianza alta.
 6. MUESTRA un resumen de inversión total al final.
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
+ MODELOS CUANTITATIVOS
+══════════════════════════════════════════════
+El sistema ejecuta AUTOMÁTICAMENTE modelos cuantitativos cuando detecta un partido en tu mensaje:
+- DIXON-COLES: Modelo Poisson corregido que ajusta probabilidades de empate y resultados bajos (0-0, 1-0, 0-1, 1-1)
+- Liga calibrada: la media de goles se ajusta por competición (Bundesliga 3.14, La Liga 2.55, etc.)
+- ELO RATING: Estimación 1X2 basada en rating Elo relativo
+- VALUE BETS: Comparación de probabilidades del modelo vs cuotas del mercado
+- Cuando recibes "DATOS CUANTITATIVOS DEL MODELO", ÚSALOS como base de tu análisis
+- NUNCA contradigas los datos del modelo sin justificación sólida
+- Si el modelo detecta valor (EV+), destácalo; si no lo detecta, no lo inventes
+
+══════════════════════════════════════════════
  METODOLOGÍA DE ANÁLISIS
-════════════════════════════════════════════
+══════════════════════════════════════════════
 Para cada pronóstico analizas (solo si tienes datos reales):
 1. FORMA RECIENTE — Últimos 5 partidos (W/D/L, goles)
 2. HEAD TO HEAD — Historial directo reciente
-3. CONTEXTO — Fase, importancia, sede, presión
-4. BAJAS — Jugadores clave ausentes (solo datos reales)
-5. ESTILO DE JUEGO — Presión alta/baja, transiciones
-6. MOTIVACIÓN — ¿Quién necesita más el resultado?
-7. VALOR EN CUOTAS — Cuotas como referencia, no como verdad
+3. DATOS DEL MODELO — Dixon-Coles, Elo, datos cuantitativos del sistema
+4. CONTEXTO — Fase, importancia, sede, presión
+5. BAJAS — Jugadores clave ausentes (solo datos reales)
+6. ESTILO DE JUEGO — Presión alta/baja, transiciones
+7. MOTIVACIÓN — ¿Quién necesita más el resultado?
+8. VALOR EN CUOTAS — Cuotas como referencia, no como verdad
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  FORMATO OBLIGATORIO DE PRONÓSTICO
-════════════════════════════════════════════
+══════════════════════════════════════════════
 ⚽ [P00X] PARTIDO — Competición
 📅 Fecha
 📊 ANÁLISIS [3-5 líneas]
@@ -67,9 +82,9 @@ Payout: [payout calculado]
 Razonamiento: [por qué tiene valor]
 ⚠️ RIESGO [Factores que pueden tumbar el pronóstico]
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  COMANDOS
-════════════════════════════════════════════
+══════════════════════════════════════════════
 !resultado [ID] [W/L/V] → Registra resultado
 !historial → Tabla de pronósticos
 !stats → Estadísticas completas
@@ -79,11 +94,11 @@ Razonamiento: [por qué tiene valor]
 !reset → Borra historial
 !bankroll [cantidad] → Define bankroll
 !racha → Racha actual y recalibración
-!analyze Equipo1 vs Equipo2 → Análisis cuantitativo (Poisson, Elo, H2H, valor)
+!analyze Equipo1 vs Equipo2 → Forzar análisis cuantitativo completo
 
-════════════════════════════════════════════
+══════════════════════════════════════════════
  REGLAS IRROMPIBLES
-════════════════════════════════════════════
+══════════════════════════════════════════════
 1. NUNCA garantizas un resultado.
 2. NUNCA inventas datos.
 3. SIEMPRE distingues hecho vs opinión.
@@ -92,6 +107,8 @@ Razonamiento: [por qué tiene valor]
 6. Racha 3+ fallos → notificar y reducir stakes.
 7. NUNCA inventes el resultado de un partido terminado.
 `;
+
+const ANALYSIS_TIMEOUT = 8000;
 
 export async function POST(request) {
   try {
@@ -151,6 +168,11 @@ export async function POST(request) {
         systemContent += `\nAnaliza patrones en esos fallos. ¿Hay sesgos? ¿Over 2.5 en ligas de pocos goles? ¿Confianza alta en cuotas bajas? Usa esta información para recalibrar.`;
       }
 
+      const btResult = backtest(predictions);
+      if (btResult) {
+        systemContent += formatBacktestOutput(btResult);
+      }
+
       systemContent += `\n\nCALIBRACIÓN: Tu acierto global es ${hitRate}%. Ajusta tu confianza en proporción. NO seas más confiado de lo que tu historial justifica.`;
       systemContent += `\nÚltimo ID usado: P${String(predictions.length).padStart(3, '0')}. El siguiente pronóstico debe usar P${String(predictions.length + 1).padStart(3, '0')}.`;
     } else {
@@ -160,122 +182,54 @@ export async function POST(request) {
     let contextMessages = messages.slice(-20);
 
     const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop();
+
+    let team1 = null, team2 = null, forceAnalysis = false;
+
     const analyzeMatch = lastUserMsg?.content?.match(/!analyze\s+(.+?)\s+vs\.?\s+(.+)/i);
-    if (analyzeMatch && proxyUrl) {
-      const aTeam1 = analyzeMatch[1].trim();
-      const aTeam2 = analyzeMatch[2].trim();
-      try {
-        const { translate } = await import('@/lib/teamTranslations');
-        const { matchTeam } = await import('@/lib/teamTranslations');
-        const en1 = translate(aTeam1);
-        const en2 = translate(aTeam2);
+    if (analyzeMatch) {
+      team1 = analyzeMatch[1].trim();
+      team2 = analyzeMatch[2].trim();
+      forceAnalysis = true;
+    } else {
+      const matchup = detectMatchup(lastUserMsg?.content || '');
+      if (matchup && matchup.team1) {
+        team1 = matchup.team1;
+        team2 = matchup.team2;
+      }
+    }
 
-        let teamId1 = null, teamId2 = null;
-        const [res1, res2] = await Promise.all([
-          fetch(`${proxyUrl}/teams?search=${encodeURIComponent(en1)}`),
-          fetch(`${proxyUrl}/teams?search=${encodeURIComponent(en2)}`),
-        ]);
-        const [data1, data2] = await Promise.all([res1.json(), res2.json()]);
-
-        if (data1.response?.length) {
-          for (const t of data1.response) {
-            if (matchTeam(t.team.name, en1) >= 2) { teamId1 = t.team.id; break; }
-          }
-        }
-        if (data2.response?.length) {
-          for (const t of data2.response) {
-            if (matchTeam(t.team.name, en2) >= 2) { teamId2 = t.team.id; break; }
-          }
-        }
-
-        let homeForm = [], awayForm = [], h2hData = null, oddsData = null, fixtureId = null;
-
-        if (teamId1 && teamId2) {
-          const [lastR1, lastR2, h2hR] = await Promise.all([
-            fetch(`${proxyUrl}/fixtures?team=${teamId1}&last=5`),
-            fetch(`${proxyUrl}/fixtures?team=${teamId2}&last=5`),
-            fetch(`${proxyUrl}/fixtures/headtohead?h2h=${teamId1}-${teamId2}&last=10`),
+    if (team1 && proxyUrl) {
+      const effectiveTeam2 = team2;
+      if (effectiveTeam2) {
+        try {
+          const analysisPromise = runAnalysis(team1, effectiveTeam2, proxyUrl);
+          const result = await Promise.race([
+            analysisPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ANALYSIS_TIMEOUT)),
           ]);
-          const [lastD1, lastD2, h2hD] = await Promise.all([lastR1.json(), lastR2.json(), h2hR.json()]);
 
-          homeForm = (lastD1.response || []).map(f => ({
-            goalsFor: f.teams.home.id === teamId1 ? f.goals.home : f.goals.away,
-            goalsAgainst: f.teams.home.id === teamId1 ? f.goals.away : f.goals.home,
-          }));
-          awayForm = (lastD2.response || []).map(f => ({
-            goalsFor: f.teams.away.id === teamId2 ? f.goals.away : f.goals.home,
-            goalsAgainst: f.teams.away.id === teamId2 ? f.goals.home : f.goals.away,
-          }));
+          if (result && !result.error) {
+            systemContent += result.modelText;
 
-          if (h2hD.response?.length) {
-            h2hData = h2hD.response.map(f => {
-              const hg = f.goals.home, ag = f.goals.away;
-              const isT1Home = f.teams.home.id === teamId1;
-              let winner;
-              if (hg > ag) winner = isT1Home ? 'home' : 'away';
-              else if (hg < ag) winner = isT1Home ? 'away' : 'home';
-              else winner = 'draw';
-              return {
-                home: f.teams.home.name, away: f.teams.away.name,
-                homeGoals: hg, awayGoals: ag, winner,
-                goals: hg + ag, bothScored: hg > 0 && ag > 0,
-                date: f.fixture.date?.split('T')[0] || '',
-                competition: f.league?.name || '',
-              };
-            });
-          }
-
-          for (let offset = -2; offset <= 7 && !fixtureId; offset++) {
-            const d = new Date(); d.setDate(d.getDate() + offset);
-            try {
-              const fRes = await fetch(`${proxyUrl}/fixtures?date=${d.toISOString().split('T')[0]}&team=${teamId1}`);
-              const fData = await fRes.json();
-              for (const f of (fData.response || [])) {
-                if (f.teams.home.id === teamId2 || f.teams.away.id === teamId2) { fixtureId = f.fixture.id; break; }
-              }
-            } catch {}
-          }
-
-          if (fixtureId) {
-            try {
-              const oddsR = await fetch(`${proxyUrl}/odds?fixture=${fixtureId}`);
-              const oddsJ = await oddsR.json();
-              if (oddsJ.response?.length) {
-                oddsData = oddsJ.response[0].bookmakers.slice(0, 5).map(bm => ({
-                  name: bm.name,
-                  bets: bm.bets.filter(b => !b.name.toLowerCase().includes('correct score'))
-                    .map(bet => ({ name: bet.name, values: bet.values.slice(0, 8).map(v => ({ value: v.value, odd: v.odd })) })),
-                }));
-              }
-            } catch {}
-          }
-        }
-
-        if (homeForm.length > 0 || awayForm.length > 0) {
-          const homeAvgG = homeForm.length > 0 ? homeForm.reduce((s, f) => s + f.goalsFor, 0) / homeForm.length : 1.2;
-          const homeAvgC = homeForm.length > 0 ? homeForm.reduce((s, f) => s + f.goalsAgainst, 0) / homeForm.length : 1.0;
-          const awayAvgG = awayForm.length > 0 ? awayForm.reduce((s, f) => s + f.goalsFor, 0) / awayForm.length : 1.0;
-          const awayAvgC = awayForm.length > 0 ? awayForm.reduce((s, f) => s + f.goalsAgainst, 0) / awayForm.length : 1.1;
-
-          const lambdas = estimateLambdas(homeAvgG, awayAvgG, homeAvgC, awayAvgC);
-          const probs = poissonProbabilities(lambdas.homeLambda, lambdas.awayLambda);
-          const eloH = 1500 + (homeForm.filter(f => f.result === 'W').length - homeForm.filter(f => f.result === 'L').length) * 40;
-          const eloA = 1500 + (awayForm.filter(f => f.result === 'W').length - awayForm.filter(f => f.result === 'L').length) * 40;
-          const elo1X2 = eloTo1X2(eloH, eloA);
-
-          systemContent += formatModelOutput(probs, h2hData, elo1X2);
-
-          if (oddsData) {
-            const vb = findValueBets(probs, oddsData);
-            if (vb.length) {
+            if (result.valueBets?.length) {
               systemContent += `\n\n🔴⭐ APUESTAS CON VALOR DETECTADAS:`;
-              vb.forEach(v => {
+              result.valueBets.forEach(v => {
                 systemContent += `\n- ${v.market}: Prob modelo ${(v.probability * 100).toFixed(1)}% | Cuota ${v.bestOdds} (${v.bookmaker}) | EV+${v.ev}% | Stake: €${v.suggestedStake}`;
               });
             }
+
+            if (result.league) {
+              systemContent += `\n\n📈 LIGA: ${result.league} (media goles: ${result.leagueAvg})`;
+            }
+          }
+        } catch {
+          if (forceAnalysis) {
+            systemContent += `\n\n⚠️ El análisis cuantitativo no pudo completarse (timeout o error). Responde basándote en tu conocimiento general pero advierte al usuario.`;
           }
         }
-      } catch {}
+      } else if (forceAnalysis) {
+        systemContent += `\n\n⚠️ Solo se detectó un equipo (${team1}). Necesito dos equipos para el análisis. Pregunta al usuario por el rival.`;
+      }
     }
 
     if (userId && sessionId) {
