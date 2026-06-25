@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { getStatsByMarket, getRecentErrors, getStreak } from '@/lib/stats';
+import { poissonProbabilities, estimateLambdas, eloTo1X2, findValueBets, formatModelOutput } from '@/lib/models';
 
 const SYSTEM_PROMPT = `Eres "El Analista", el mejor pronosticador de fútbol del mundo. Especializado en TODAS las competiciones: Copa del Mundo FIFA, Eliminatorias, UEFA Nations League, Eurocopa, Copa América, Champions League, La Liga, Premier League, Serie A, Bundesliga, Ligue 1, y cualquier competición con cuotas disponibles.
 
@@ -78,6 +79,7 @@ Razonamiento: [por qué tiene valor]
 !reset → Borra historial
 !bankroll [cantidad] → Define bankroll
 !racha → Racha actual y recalibración
+!analyze Equipo1 vs Equipo2 → Análisis cuantitativo (Poisson, Elo, H2H, valor)
 
 ════════════════════════════════════════════
  REGLAS IRROMPIBLES
@@ -156,6 +158,125 @@ export async function POST(request) {
     }
 
     let contextMessages = messages.slice(-20);
+
+    const lastUserMsg = contextMessages.filter(m => m.role === 'user').pop();
+    const analyzeMatch = lastUserMsg?.content?.match(/!analyze\s+(.+?)\s+vs\.?\s+(.+)/i);
+    if (analyzeMatch && proxyUrl) {
+      const aTeam1 = analyzeMatch[1].trim();
+      const aTeam2 = analyzeMatch[2].trim();
+      try {
+        const { translate } = await import('@/lib/teamTranslations');
+        const { matchTeam } = await import('@/lib/teamTranslations');
+        const en1 = translate(aTeam1);
+        const en2 = translate(aTeam2);
+
+        let teamId1 = null, teamId2 = null;
+        const [res1, res2] = await Promise.all([
+          fetch(`${proxyUrl}/teams?search=${encodeURIComponent(en1)}`),
+          fetch(`${proxyUrl}/teams?search=${encodeURIComponent(en2)}`),
+        ]);
+        const [data1, data2] = await Promise.all([res1.json(), res2.json()]);
+
+        if (data1.response?.length) {
+          for (const t of data1.response) {
+            if (matchTeam(t.team.name, en1) >= 2) { teamId1 = t.team.id; break; }
+          }
+        }
+        if (data2.response?.length) {
+          for (const t of data2.response) {
+            if (matchTeam(t.team.name, en2) >= 2) { teamId2 = t.team.id; break; }
+          }
+        }
+
+        let homeForm = [], awayForm = [], h2hData = null, oddsData = null, fixtureId = null;
+
+        if (teamId1 && teamId2) {
+          const [lastR1, lastR2, h2hR] = await Promise.all([
+            fetch(`${proxyUrl}/fixtures?team=${teamId1}&last=5`),
+            fetch(`${proxyUrl}/fixtures?team=${teamId2}&last=5`),
+            fetch(`${proxyUrl}/fixtures/headtohead?h2h=${teamId1}-${teamId2}&last=10`),
+          ]);
+          const [lastD1, lastD2, h2hD] = await Promise.all([lastR1.json(), lastR2.json(), h2hR.json()]);
+
+          homeForm = (lastD1.response || []).map(f => ({
+            goalsFor: f.teams.home.id === teamId1 ? f.goals.home : f.goals.away,
+            goalsAgainst: f.teams.home.id === teamId1 ? f.goals.away : f.goals.home,
+          }));
+          awayForm = (lastD2.response || []).map(f => ({
+            goalsFor: f.teams.away.id === teamId2 ? f.goals.away : f.goals.home,
+            goalsAgainst: f.teams.away.id === teamId2 ? f.goals.home : f.goals.away,
+          }));
+
+          if (h2hD.response?.length) {
+            h2hData = h2hD.response.map(f => {
+              const hg = f.goals.home, ag = f.goals.away;
+              const isT1Home = f.teams.home.id === teamId1;
+              let winner;
+              if (hg > ag) winner = isT1Home ? 'home' : 'away';
+              else if (hg < ag) winner = isT1Home ? 'away' : 'home';
+              else winner = 'draw';
+              return {
+                home: f.teams.home.name, away: f.teams.away.name,
+                homeGoals: hg, awayGoals: ag, winner,
+                goals: hg + ag, bothScored: hg > 0 && ag > 0,
+                date: f.fixture.date?.split('T')[0] || '',
+                competition: f.league?.name || '',
+              };
+            });
+          }
+
+          for (let offset = -2; offset <= 7 && !fixtureId; offset++) {
+            const d = new Date(); d.setDate(d.getDate() + offset);
+            try {
+              const fRes = await fetch(`${proxyUrl}/fixtures?date=${d.toISOString().split('T')[0]}&team=${teamId1}`);
+              const fData = await fRes.json();
+              for (const f of (fData.response || [])) {
+                if (f.teams.home.id === teamId2 || f.teams.away.id === teamId2) { fixtureId = f.fixture.id; break; }
+              }
+            } catch {}
+          }
+
+          if (fixtureId) {
+            try {
+              const oddsR = await fetch(`${proxyUrl}/odds?fixture=${fixtureId}`);
+              const oddsJ = await oddsR.json();
+              if (oddsJ.response?.length) {
+                oddsData = oddsJ.response[0].bookmakers.slice(0, 5).map(bm => ({
+                  name: bm.name,
+                  bets: bm.bets.filter(b => !b.name.toLowerCase().includes('correct score'))
+                    .map(bet => ({ name: bet.name, values: bet.values.slice(0, 8).map(v => ({ value: v.value, odd: v.odd })) })),
+                }));
+              }
+            } catch {}
+          }
+        }
+
+        if (homeForm.length > 0 || awayForm.length > 0) {
+          const homeAvgG = homeForm.length > 0 ? homeForm.reduce((s, f) => s + f.goalsFor, 0) / homeForm.length : 1.2;
+          const homeAvgC = homeForm.length > 0 ? homeForm.reduce((s, f) => s + f.goalsAgainst, 0) / homeForm.length : 1.0;
+          const awayAvgG = awayForm.length > 0 ? awayForm.reduce((s, f) => s + f.goalsFor, 0) / awayForm.length : 1.0;
+          const awayAvgC = awayForm.length > 0 ? awayForm.reduce((s, f) => s + f.goalsAgainst, 0) / awayForm.length : 1.1;
+
+          const lambdas = estimateLambdas(homeAvgG, awayAvgG, homeAvgC, awayAvgC);
+          const probs = poissonProbabilities(lambdas.homeLambda, lambdas.awayLambda);
+          const eloH = 1500 + (homeForm.filter(f => f.result === 'W').length - homeForm.filter(f => f.result === 'L').length) * 40;
+          const eloA = 1500 + (awayForm.filter(f => f.result === 'W').length - awayForm.filter(f => f.result === 'L').length) * 40;
+          const elo1X2 = eloTo1X2(eloH, eloA);
+
+          systemContent += formatModelOutput(probs, h2hData, elo1X2);
+
+          if (oddsData) {
+            const vb = findValueBets(probs, oddsData);
+            if (vb.length) {
+              systemContent += `\n\n🔴⭐ APUESTAS CON VALOR DETECTADAS:`;
+              vb.forEach(v => {
+                systemContent += `\n- ${v.market}: Prob modelo ${(v.probability * 100).toFixed(1)}% | Cuota ${v.bestOdds} (${v.bookmaker}) | EV+${v.ev}% | Stake: €${v.suggestedStake}`;
+              });
+            }
+          }
+        }
+      } catch {}
+    }
 
     if (userId && sessionId) {
       const supabase = getSupabase();

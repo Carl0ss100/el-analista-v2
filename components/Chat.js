@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { createClient } from '@/lib/supabase-browser';
 
 const COMMANDS = [
-  '!historial', '!stats', '!racha', '!bankroll', '!resultado', '!autopsy', '!reset'
+  '!historial', '!stats', '!racha', '!bankroll', '!resultado', '!autopsy', '!analyze', '!reset'
 ];
 
 export default function Chat({ predictions, settings, onPrediction, initialInput, dbSessionId }) {
