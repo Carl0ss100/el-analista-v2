@@ -106,6 +106,7 @@ Razonamiento: [por qué tiene valor]
 5. Combinadas SIEMPRE con advertencia de riesgo multiplicado.
 6. Racha 3+ fallos → notificar y reducir stakes.
 7. NUNCA inventes el resultado de un partido terminado.
+8. NUNCA niegues la existencia de un partido si el usuario menciona que existe. Si no tienes datos, di que no pudiste obtener información pero ANALIZA igualmente con tu conocimiento.
 `;
 
 const ANALYSIS_TIMEOUT = 8000;
@@ -221,11 +222,12 @@ export async function POST(request) {
             if (result.league) {
               systemContent += `\n\n📈 LIGA: ${result.league} (media goles: ${result.leagueAvg})`;
             }
+          } else {
+            const errMsg = result?.error || 'Error desconocido';
+            systemContent += `\n\n⚠️ El usuario preguntó sobre ${team1} vs ${team2}. El análisis cuantitativo falló: ${errMsg}. Responde igualmente basándote en tu conocimiento sobre estos equipos. NUNCA digas que el partido no existe si el usuario afirma que sí.`;
           }
         } catch {
-          if (forceAnalysis) {
-            systemContent += `\n\n⚠️ El análisis cuantitativo no pudo completarse (timeout o error). Responde basándote en tu conocimiento general pero advierte al usuario.`;
-          }
+          systemContent += `\n\n⚠️ El usuario preguntó sobre ${team1} vs ${team2}. El análisis cuantitativo no pudo completarse (timeout o error de red). Responde basándote en tu conocimiento general sobre estos equipos. NUNCA digas que el partido no existe si el usuario afirma que sí.`;
         }
       } else if (forceAnalysis) {
         systemContent += `\n\n⚠️ Solo se detectó un equipo (${team1}). Necesito dos equipos para el análisis. Pregunta al usuario por el rival.`;
