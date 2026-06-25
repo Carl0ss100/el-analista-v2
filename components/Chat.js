@@ -156,6 +156,14 @@ export default function Chat({ predictions, settings, onPrediction, initialInput
       if (data.error) {
         addMessage('system', `⚠️ Error: ${data.error}`);
       } else {
+        if (data.detectedMatch) {
+          const dm = data.detectedMatch;
+          const icon = dm.success ? '📊' : '🔍';
+          const status = dm.success
+            ? `Análisis cuantitativo completado${dm.league ? ` — ${dm.league}` : ''}`
+            : `Detectado: ${dm.team1} vs ${dm.team2} — sin datos de API (${dm.error || 'timeout'})`;
+          addMessage('system', `${icon} ${status}`);
+        }
         addMessage('assistant', data.content);
         const newPreds = detectPredictions(data.content);
         newPreds.forEach(pred => onPrediction(pred));

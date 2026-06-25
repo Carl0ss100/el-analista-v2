@@ -199,9 +199,12 @@ export async function POST(request) {
       }
     }
 
+    let detectedMatch = null;
+
     if (team1 && proxyUrl) {
       const effectiveTeam2 = team2;
       if (effectiveTeam2) {
+        detectedMatch = { team1, team2, success: false, error: null };
         try {
           const analysisPromise = runAnalysis(team1, effectiveTeam2, proxyUrl);
           const result = await Promise.race([
@@ -210,6 +213,8 @@ export async function POST(request) {
           ]);
 
           if (result && !result.error) {
+            detectedMatch.success = true;
+            detectedMatch.league = result.league || null;
             systemContent += result.modelText;
 
             if (result.valueBets?.length) {
@@ -224,9 +229,11 @@ export async function POST(request) {
             }
           } else {
             const errMsg = result?.error || 'Error desconocido';
+            detectedMatch.error = errMsg;
             systemContent += `\n\n⚠️ El usuario preguntó sobre ${team1} vs ${team2}. El análisis cuantitativo falló: ${errMsg}. Responde igualmente basándote en tu conocimiento sobre estos equipos. NUNCA digas que el partido no existe si el usuario afirma que sí.`;
           }
         } catch {
+          detectedMatch.error = 'timeout';
           systemContent += `\n\n⚠️ El usuario preguntó sobre ${team1} vs ${team2}. El análisis cuantitativo no pudo completarse (timeout o error de red). Responde basándote en tu conocimiento general sobre estos equipos. NUNCA digas que el partido no existe si el usuario afirma que sí.`;
         }
       } else if (forceAnalysis) {
@@ -271,7 +278,9 @@ export async function POST(request) {
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content || 'Sin respuesta.';
-    return NextResponse.json({ content });
+    const response = { content };
+    if (detectedMatch) response.detectedMatch = detectedMatch;
+    return NextResponse.json(response);
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
