@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { matchTeam } from '@/lib/teamTranslations';
 
 export default function History({ predictions, onUpdate, onDelete }) {
   const [search, setSearch] = useState('');
@@ -32,10 +33,10 @@ export default function History({ predictions, onUpdate, onDelete }) {
   const resolveAll = useCallback(async () => {
     const pending = predictions.filter(p => !p.result && p.match_name);
     for (const pred of pending) {
-      const teams = pred.match_name.split(/\s*vs\.?\s*|\s*-\s*/i).filter(Boolean);
-      if (teams.length < 2) continue;
+      const parts = pred.match_name.split(/\s*vs\.?\s*|\s*-\s*/i).filter(Boolean);
+      if (parts.length < 2) continue;
       try {
-        const res = await fetch(`/api/football/result?team1=${encodeURIComponent(teams[0])}&team2=${encodeURIComponent(teams[1])}`);
+        const res = await fetch(`/api/football/result?team1=${encodeURIComponent(parts[0].trim())}&team2=${encodeURIComponent(parts[1].trim())}`);
         const data = await res.json();
         if (data.finished) {
           let result = 'V';
@@ -45,25 +46,56 @@ export default function History({ predictions, onUpdate, onDelete }) {
           const awayWon = ga > gh;
           const draw = gh === ga;
           const market = (pred.market || '').toLowerCase();
-          if (market.includes('1x2') || market.includes('resultado')) {
-            const isHomePred = pred.match_name.toLowerCase().startsWith(teams[0].toLowerCase());
-            if (draw) result = 'V';
-            else if ((isHomePred && homeWon) || (!isHomePred && awayWon)) result = 'W';
-            else result = 'L';
-          } else if (market.includes('over') || market.includes('más')) {
-            const total = gh + ga;
-            const lineMatch = pred.match_name.match(/(\d+\.?\d*)/);
-            const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
-            result = total > line ? 'W' : 'L';
-          } else if (market.includes('under') || market.includes('menos')) {
-            const total = gh + ga;
-            const lineMatch = pred.match_name.match(/(\d+\.?\d*)/);
-            const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
-            result = total < line ? 'W' : 'L';
-          } else if (market.includes('btts') || market.includes('ambos')) {
-            result = (gh > 0 && ga > 0) ? 'W' : 'L';
+
+          if (data.home && data.away) {
+            const homeScore = matchTeam(data.home, parts[0].trim());
+            const awayScore = matchTeam(data.away, parts[1].trim());
+            const isHome = homeScore >= awayScore;
+            const homeTeam = isHome;
+            const awayTeam = !isHome;
+
+            if (market.includes('1x2') || market.includes('resultado')) {
+              if (draw) result = 'V';
+              else if ((homeTeam && homeWon) || (awayTeam && awayWon)) result = 'W';
+              else result = 'L';
+            } else if (market.includes('over') || market.includes('más')) {
+              const total = gh + ga;
+              const lineMatch = (pred.bet_description || pred.match_name).match(/(\d+\.?\d*)/);
+              const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
+              result = total > line ? 'W' : 'L';
+            } else if (market.includes('under') || market.includes('menos')) {
+              const total = gh + ga;
+              const lineMatch = (pred.bet_description || pred.match_name).match(/(\d+\.?\d*)/);
+              const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
+              result = total < line ? 'W' : 'L';
+            } else if (market.includes('btts') || market.includes('ambos')) {
+              result = (gh > 0 && ga > 0) ? 'W' : 'L';
+            } else {
+              if (draw) result = 'V';
+              else if ((homeTeam && homeWon) || (awayTeam && awayWon)) result = 'W';
+              else result = 'L';
+            }
           } else {
-            result = homeWon || awayWon ? 'W' : 'V';
+            if (market.includes('1x2') || market.includes('resultado')) {
+              const isHomePred = pred.match_name.toLowerCase().startsWith(parts[0].toLowerCase());
+              if (draw) result = 'V';
+              else if ((isHomePred && homeWon) || (!isHomePred && awayWon)) result = 'W';
+              else result = 'L';
+            } else if (market.includes('over') || market.includes('más')) {
+              const total = gh + ga;
+              const lineMatch = (pred.bet_description || pred.match_name).match(/(\d+\.?\d*)/);
+              const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
+              result = total > line ? 'W' : 'L';
+            } else if (market.includes('under') || market.includes('menos')) {
+              const total = gh + ga;
+              const lineMatch = (pred.bet_description || pred.match_name).match(/(\d+\.?\d*)/);
+              const line = lineMatch ? parseFloat(lineMatch[1]) : 2.5;
+              result = total < line ? 'W' : 'L';
+            } else if (market.includes('btts') || market.includes('ambos')) {
+              result = (gh > 0 && ga > 0) ? 'W' : 'L';
+            } else {
+              result = homeWon || awayWon ? 'W' : 'V';
+            }
           }
           onUpdate(pred.id, { result });
         }

@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { createClient } from '@/lib/supabase-browser';
 
 const COMMANDS = [
-  '!historial', '!stats', '!racha', '!bankroll', '!reset'
+  '!historial', '!stats', '!racha', '!bankroll', '!resultado', '!autopsy', '!reset'
 ];
 
 export default function Chat({ predictions, settings, onPrediction, initialInput, dbSessionId }) {
@@ -180,10 +180,67 @@ export default function Chat({ predictions, settings, onPrediction, initialInput
 
   const renderContent = (content) => {
     let html = content.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+
+    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+    const lines = html.split('\n');
+    const processed = [];
+    let inTable = false;
+    let tableRows = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isTableRow = /^\|.*\|$/.test(line.trim());
+      const isSeparator = /^\|[\s\-:|]+\|$/.test(line.trim());
+
+      if (isTableRow && !isSeparator) {
+        if (!inTable) { inTable = true; tableRows = []; }
+        const cells = line.trim().split('|').filter(c => c.trim() !== '');
+        const cellTags = cells.map(c => `<td>${c.trim()}</td>`).join('');
+        tableRows.push(`<tr>${cellTags}</tr>`);
+        continue;
+      } else if (isSeparator && inTable) {
+        continue;
+      } else {
+        if (inTable) {
+          processed.push(`<table class="msg-table"><thead>${tableRows[0] || ''}</thead><tbody>${tableRows.slice(1).join('')}</tbody></table>`);
+          inTable = false;
+          tableRows = [];
+        }
+        processed.push(line);
+      }
+    }
+    if (inTable) {
+      processed.push(`<table class="msg-table"><thead>${tableRows[0] || ''}</thead><tbody>${tableRows.slice(1).join('')}</tbody></table>`);
+    }
+
+    html = processed.join('\n');
+
+    html = html.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
     return html;
   };
+
+  const exportChat = useCallback(() => {
+    if (messages.length === 0) return;
+    let text = `El Analista — Conversación exportada\nFecha: ${new Date().toLocaleString('es-ES')}\n${'═'.repeat(50)}\n\n`;
+    messages.forEach(m => {
+      const time = m.created_at ? new Date(m.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+      const role = m.role === 'user' ? '👤 Usuario' : m.role === 'assistant' ? '🤖 Analista' : '⚙️ Sistema';
+      text += `[${time}] ${role}:\n${m.content}\n\n`;
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `analista_chat_${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [messages]);
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).catch(() => {});
@@ -191,6 +248,9 @@ export default function Chat({ predictions, settings, onPrediction, initialInput
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="chat-header">
+        <button className="cmd-btn" onClick={exportChat} title="Exportar conversación">📥 Exportar</button>
+      </div>
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="msg system" style={{ alignSelf: 'center' }}>

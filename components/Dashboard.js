@@ -3,22 +3,46 @@
 import { useEffect, useRef } from 'react';
 import { getStats, getStreak, getStatsByMarket, getWeeklyPL, getMonthlyHitRate } from '@/lib/stats';
 
+function getCalibration(predictions) {
+  const groups = { Alta: { wins: 0, total: 0 }, Media: { wins: 0, total: 0 }, Baja: { wins: 0, total: 0 } };
+  predictions.filter(p => p.result && p.result !== 'V').forEach(p => {
+    const c = p.confidence || 'Media';
+    if (groups[c]) { groups[c].total++; if (p.result === 'W') groups[c].wins++; }
+  });
+  return Object.entries(groups).map(([level, d]) => ({ level, ...d, hitRate: d.total > 0 ? +((d.wins / d.total) * 100).toFixed(1) : 0 }));
+}
+
+function getEV(predictions) {
+  const resolved = predictions.filter(p => p.result && p.result !== 'V' && p.odds);
+  if (resolved.length === 0) return null;
+  let totalEV = 0;
+  resolved.forEach(p => {
+    const realProb = p.result === 'W' ? 1 : 0;
+    totalEV += (realProb * p.odds) - 1;
+  });
+  return { avg: +((totalEV / resolved.length) * 100).toFixed(1), count: resolved.length };
+}
+
 export default function Dashboard({ predictions, settings }) {
   const bankrollRef = useRef(null);
   const weeklyRef = useRef(null);
   const monthlyRef = useRef(null);
+  const calibrationRef = useRef(null);
 
   const stats = getStats(predictions);
   const streak = getStreak(predictions);
   const marketStats = getStatsByMarket(predictions);
   const weekly = getWeeklyPL(predictions);
   const monthly = getMonthlyHitRate(predictions);
+  const calibration = getCalibration(predictions);
+  const ev = getEV(predictions);
   const currentBankroll = (settings.bankroll || 0) + stats.totalPnl;
 
   useEffect(() => {
     drawBankrollChart();
     drawWeeklyPLChart();
     drawMonthlyHRChart();
+    drawCalibrationChart();
   }, [predictions, settings]);
 
   function drawBankrollChart() {
@@ -168,6 +192,70 @@ export default function Dashboard({ predictions, settings }) {
   const streakIcon = streak.type === 'W' ? '🔥' : '❄️';
   const streakClass = streak.count > 0 ? (streak.type === 'W' ? 'green' : 'danger') : '';
   const bankrollClass = stats.totalPnl >= 0 ? 'green' : 'danger';
+  const evClass = ev ? (ev.avg >= 0 ? 'green' : 'danger') : '';
+
+  function drawCalibrationChart() {
+    const canvas = calibrationRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const parent = canvas.parentElement;
+    canvas.width = parent.offsetWidth * 2; canvas.height = parent.offsetHeight * 2;
+    ctx.scale(2, 2);
+    const w = parent.offsetWidth, h = parent.offsetHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    const hasData = calibration.some(c => c.total > 0);
+    if (!hasData) {
+      ctx.fillStyle = '#64748B'; ctx.font = '13px Inter, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('Marca resultados para ver calibración', w / 2, h / 2);
+      return;
+    }
+
+    const padL = 50, padR = 20, padT = 20, padB = 40;
+    const chartW = w - padL - padR, chartH = h - padT - padB;
+    const gap = chartW / calibration.length;
+    const barW = Math.min(gap * 0.5, 60);
+
+    const expected = { Alta: 70, Media: 50, Baja: 30 };
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    for (let pct = 0; pct <= 100; pct += 25) {
+      const y = padT + chartH - (pct / 100) * chartH;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+      ctx.fillStyle = '#64748B'; ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(pct + '%', padL - 8, y + 4);
+    }
+
+    const thresholds = [30, 50, 70];
+    ctx.setLineDash([4, 4]);
+    thresholds.forEach(pct => {
+      const y = padT + chartH - (pct / 100) * chartH;
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    calibration.forEach((c, i) => {
+      const x = padL + gap * i + gap / 2 - barW / 2;
+      const expPct = expected[c.level] || 50;
+
+      const expY = padT + chartH - (expPct / 100) * chartH;
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath(); ctx.roundRect(x, expY, barW, padT + chartH - expY, 3); ctx.fill();
+
+      if (c.total > 0) {
+        const barH = (c.hitRate / 100) * chartH * 0.9;
+        const barY = padT + chartH - barH;
+        const color = c.hitRate >= expPct ? 'rgba(0,230,138,0.7)' : 'rgba(239,68,68,0.7)';
+        ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(x, barY, barW, barH, 3); ctx.fill();
+        ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 10px Inter, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(c.hitRate + '%', x + barW / 2, barY - 6);
+      }
+
+      ctx.fillStyle = '#64748B'; ctx.font = '9px Inter, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(`${c.level} (${c.total})`, x + barW / 2, padT + chartH + 14);
+    });
+  }
 
   return (
     <div className="dashboard">
@@ -194,6 +282,12 @@ export default function Dashboard({ predictions, settings }) {
           <div className="label">Bankroll</div>
           <div className="value">{settings.bankroll ? `€${currentBankroll.toFixed(0)}` : '—'}</div>
           <div className="sub">{settings.bankroll ? `P/L: ${stats.totalPnl >= 0 ? '+' : ''}€${stats.totalPnl.toFixed(2)}` : 'Sin bankroll'}</div>
+        </div>
+        <div className={`metric-card ${evClass}`}>
+          <div className="glow" />
+          <div className="label">EV%</div>
+          <div className="value">{ev ? `${ev.avg >= 0 ? '+' : ''}${ev.avg}%` : '—'}</div>
+          <div className="sub">{ev ? `${ev.count} apuestas analizadas` : 'Sin datos'}</div>
         </div>
       </div>
 
@@ -232,6 +326,13 @@ export default function Dashboard({ predictions, settings }) {
         <div className="panel">
           <div className="panel-title"><span className="icon">🎯</span> Hit Rate Mensual</div>
           <div className="chart-container"><canvas ref={monthlyRef} /></div>
+        </div>
+      </div>
+
+      <div className="dashboard-grid" style={{ gridTemplateColumns: '1fr' }}>
+        <div className="panel">
+          <div className="panel-title"><span className="icon">🔬</span> Calibración por Confianza</div>
+          <div className="chart-container"><canvas ref={calibrationRef} /></div>
         </div>
       </div>
     </div>

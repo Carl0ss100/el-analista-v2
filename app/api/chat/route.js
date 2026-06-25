@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+import { getStatsByMarket, getRecentErrors, getStreak } from '@/lib/stats';
 
 const SYSTEM_PROMPT = `Eres "El Analista", el mejor pronosticador de fútbol del mundo. Especializado en TODAS las competiciones: Copa del Mundo FIFA, Eliminatorias, UEFA Nations League, Eurocopa, Copa América, Champions League, La Liga, Premier League, Serie A, Bundesliga, Ligue 1, y cualquier competición con cuotas disponibles.
 
@@ -114,13 +115,42 @@ export async function POST(request) {
       const hitRate = resolved.length > 0 ? ((wins / resolved.length) * 100).toFixed(1) : 0;
       systemContent += `\n\nHISTORIAL DE SESIÓN: ${predictions.length} pronósticos (${wins}W, ${losses}L, hit rate: ${hitRate}%).`;
 
-      const lastPreds = predictions.slice(-5).filter(p => p.result === 'L');
-      if (lastPreds.length >= 3) {
-        systemContent += `\n⚠️ ALERTA: Racha de ${lastPreds.length} DERROTAS recientes. BAJA un nivel la confianza.`;
+      const streak = getStreak(predictions);
+      if (streak.type === 'L' && streak.count >= 3) {
+        systemContent += `\n⚠️ ALERTA: Racha de ${streak.count} DERROTAS consecutivas. BAJA un nivel la confianza de los siguientes pronósticos y notifícalo al usuario.`;
+      }
+      if (streak.type === 'W' && streak.count >= 5) {
+        systemContent += `\n🔥 Racha de ${streak.count} ACIERTOS consecutivos. Puedes mantener la confianza pero NO la subas artificialmente.`;
       }
 
-      systemContent += `\n\nCALIBRACIÓN: Tu acierto global es ${hitRate}%. Ajusta tu confianza en proporción.`;
-      systemContent += `\nÚltimo ID usado: P${String(predictions.length).padStart(3, '0')}. El siguiente pronístico debe usar P${String(predictions.length + 1).padStart(3, '0')}.`;
+      const marketStats = getStatsByMarket(predictions);
+      const marketEntries = Object.entries(marketStats);
+      if (marketEntries.length > 0) {
+        systemContent += `\n\nRENDIMIENTO POR MERCADO:`;
+        marketEntries.forEach(([market, data]) => {
+          systemContent += `\n- ${market}: ${data.hitRate}% acierto (${data.wins}W/${data.losses}L, P/L: ${data.pnl >= 0 ? '+' : ''}€${data.pnl.toFixed(2)})`;
+        });
+        const weakMarkets = marketEntries.filter(([, d]) => d.total >= 3 && d.hitRate < 40);
+        if (weakMarkets.length > 0) {
+          systemContent += `\n⚠️ MERCADOS DÉBILES: ${weakMarkets.map(([m]) => m).join(', ')}. Evita estos mercados o baja la confianza.`;
+        }
+        const strongMarkets = marketEntries.filter(([, d]) => d.total >= 3 && d.hitRate >= 65);
+        if (strongMarkets.length > 0) {
+          systemContent += `\n💪 MERCADOS FUERTES: ${strongMarkets.map(([m]) => m).join(', ')}. Tienes historial positivo aquí.`;
+        }
+      }
+
+      const recentErrors = getRecentErrors(predictions, 5);
+      if (recentErrors.length > 0) {
+        systemContent += `\n\nÚLTIMOS FALLOS (para aprender):`;
+        recentErrors.forEach(e => {
+          systemContent += `\n- ${e.id} ${e.match} | ${e.market} | Cuota: ${e.odds} | Confianza: ${e.confidence}`;
+        });
+        systemContent += `\nAnaliza patrones en esos fallos. ¿Hay sesgos? ¿Over 2.5 en ligas de pocos goles? ¿Confianza alta en cuotas bajas? Usa esta información para recalibrar.`;
+      }
+
+      systemContent += `\n\nCALIBRACIÓN: Tu acierto global es ${hitRate}%. Ajusta tu confianza en proporción. NO seas más confiado de lo que tu historial justifica.`;
+      systemContent += `\nÚltimo ID usado: P${String(predictions.length).padStart(3, '0')}. El siguiente pronóstico debe usar P${String(predictions.length + 1).padStart(3, '0')}.`;
     } else {
       systemContent += `\nNo hay pronósticos previos en esta sesión. El primer ID será P001.`;
     }

@@ -1,3 +1,6 @@
+-- El Analista v2 - Supabase Migration
+-- Ejecuta esto en: Supabase Dashboard > SQL Editor > New Query > Run
+
 -- Configuración del usuario
 CREATE TABLE user_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,7 +50,7 @@ CREATE TABLE sessions (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Resultados de partidos (caché para no repetir llamadas a la API)
+-- Resultados de partidos (caché)
 CREATE TABLE match_results (
   fixture_id INTEGER PRIMARY KEY,
   home_team TEXT NOT NULL,
