@@ -158,10 +158,21 @@ export default function Chat({ predictions, settings, onPrediction, initialInput
       } else {
         if (data.detectedMatch) {
           const dm = data.detectedMatch;
-          const icon = dm.success ? '📊' : '🔍';
-          const status = dm.success
-            ? `Análisis cuantitativo completado${dm.league ? ` — ${dm.league}` : ''}`
-            : `Detectado: ${dm.team1} vs ${dm.team2} — sin datos de API (${dm.error || 'timeout'})`;
+          let icon, status;
+          const oddsApiTag = dm.oddsApiSource === 'odds_api' ? ' [Odds-API]' : '';
+          if (dm.dataQuality === 'good') {
+            icon = '📊';
+            status = `Análisis cuantitativo completado${dm.league ? ` — ${dm.league}` : ''}${dm.nationalTeams ? ' (selecciones)' : ''}${oddsApiTag}`;
+          } else if (dm.dataQuality === 'limited') {
+            icon = '⚠️';
+            status = `Detectado: ${dm.team1} vs ${dm.team2} — datos limitados${oddsApiTag}`;
+          } else if (dm.dataQuality === 'low') {
+            icon = '⚠️';
+            status = `Detectado: ${dm.team1} vs ${dm.team2} — datos insuficientes (${dm.error || 'sin forma reciente'})`;
+          } else {
+            icon = '🔍';
+            status = `Detectado: ${dm.team1} vs ${dm.team2} — sin datos de API (${dm.error || 'timeout'})`;
+          }
           addMessage('system', `${icon} ${status}`);
         }
         addMessage('assistant', data.content);

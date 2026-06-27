@@ -48,6 +48,12 @@ export default function Settings({ settings, onSave, onReset }) {
           </div>
 
           <div className="form-group">
+            <label className="form-label">The-Odds-API Key</label>
+            <input className="form-input" value={form.oddsApiKey || ''} onChange={e => update('oddsApiKey', e.target.value)} placeholder="Tu API key de the-odds-api.com" />
+            <div className="form-hint">Cuotas de Pinnacle + 20 casas EU — valor real detectado (registrate en the-odds-api.com)</div>
+          </div>
+
+          <div className="form-group">
             <label className="form-label">Bankroll (€)</label>
             <input className="form-input" type="number" value={form.bankroll || ''} onChange={e => update('bankroll', parseFloat(e.target.value) || 0)} placeholder="0" />
           </div>

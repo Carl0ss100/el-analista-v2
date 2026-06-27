@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { translate, matchTeam } from '@/lib/teamTranslations';
+import { rateLimitedFetch } from '@/lib/fetch';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -18,8 +19,7 @@ export async function GET(request) {
     const dateStr = date.toISOString().split('T')[0];
 
     try {
-      const res = await fetch(`${proxyUrl}/fixtures?date=${dateStr}`);
-      const data = await res.json();
+      const data = await rateLimitedFetch(`${proxyUrl}/fixtures?date=${dateStr}`);
       if (data.response?.length) {
         allFixtures.push(...data.response);
       }

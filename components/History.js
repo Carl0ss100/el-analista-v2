@@ -55,7 +55,9 @@ export default function History({ predictions, onUpdate, onDelete }) {
             const awayTeam = !isHome;
 
             if (market.includes('1x2') || market.includes('resultado')) {
-              if (draw) result = 'V';
+              const isDrawBet = market.toLowerCase().includes('x') || market.toLowerCase().includes('empate');
+              if (draw && isDrawBet) result = 'W';
+              else if (draw) result = 'L';
               else if ((homeTeam && homeWon) || (awayTeam && awayWon)) result = 'W';
               else result = 'L';
             } else if (market.includes('over') || market.includes('más')) {
@@ -78,7 +80,9 @@ export default function History({ predictions, onUpdate, onDelete }) {
           } else {
             if (market.includes('1x2') || market.includes('resultado')) {
               const isHomePred = pred.match_name.toLowerCase().startsWith(parts[0].toLowerCase());
-              if (draw) result = 'V';
+              const isDrawBet = market.toLowerCase().includes('x') || market.toLowerCase().includes('empate');
+              if (draw && isDrawBet) result = 'W';
+              else if (draw) result = 'L';
               else if ((isHomePred && homeWon) || (!isHomePred && awayWon)) result = 'W';
               else result = 'L';
             } else if (market.includes('over') || market.includes('más')) {

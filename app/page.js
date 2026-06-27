@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { createClient } from '@/lib/supabase-browser';
 
 const STORAGE_KEY = 'analista_v2';
-const DEFAULT_SETTINGS = { apiKey: '', proxyUrl: '', xAuthToken: '', bankroll: 0, bookmakers: ['Bet365', 'Betfair', 'Winamax'] };
+const DEFAULT_SETTINGS = { apiKey: '', proxyUrl: '', xAuthToken: '', oddsApiKey: '', bankroll: 0, bookmakers: ['Bet365', 'Betfair', 'Winamax'] };
 
 function loadLocalData() {
   if (typeof window === 'undefined') return { settings: DEFAULT_SETTINGS, predictions: [] };
@@ -61,7 +61,14 @@ export default function Home() {
       const { data: settingsRow } = await supabase.from('user_settings').select('*').eq('user_id', user.id).single();
 
       if (cancelled) return;
-      const settings = settingsRow || DEFAULT_SETTINGS;
+      const raw = settingsRow || {};
+      const settings = {
+        ...DEFAULT_SETTINGS,
+        ...raw,
+        proxyUrl: raw.proxyUrl || raw.proxy_url || '',
+        xAuthToken: raw.xAuthToken || raw.x_auth_token || '',
+        oddsApiKey: raw.oddsApiKey || raw.odds_api_key || '',
+      };
       const predictions = (preds || []).map(p => ({
         ...p,
         match_name: p.match_name,
@@ -180,6 +187,7 @@ export default function Home() {
         bookmakers: newSettings.bookmakers || [],
         proxy_url: newSettings.proxyUrl || '',
         x_auth_token: newSettings.xAuthToken || '',
+        odds_api_key: newSettings.oddsApiKey || '',
       }, { onConflict: 'user_id' });
     }
     showToast('⚙️ Configuración guardada', 'success');
