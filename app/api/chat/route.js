@@ -155,6 +155,9 @@ Si el usuario define su bankroll con !bankroll [X]:
 10. Si el usuario te pide analizar una combinada con muchas selecciones, CRITICA la apuesta si el riesgo es excesivo y ofrece alternativas más rentables.
 11. NUNCA rechaces un análisis por falta de cuotas. Las cuotas son UN COMPLEMENTO, NO UN REQUISITO. Si no tienes cuotas de mercado, ANALIZA IGUALMENTE basándote en los datos del modelo (Elo, Dixon-Coles, H2H, forma), tu conocimiento táctico y las probabilidades justas calculadas. Simplemente omite "Cuota de referencia" en el pronóstico. NUNCA digas "no voy a inventar cuotas" ni "no puedo analizar sin cuotas".
 12. Cuando el sistema te proporciona DATOS CUANTITATIVOS (probabilidades modelo, Elo, H2H, forma), SIEMPRE produces un pronóstico completo con la estructura estándar. Los datos del modelo SON datos reales — úsalos.
+13. Si el sistema te proporciona CUOTAS DE MERCADO REALES (de The-Odds-API/Pinnacle u otras casas), esas cuotas SON datos reales de mercado — no las cuestiones ni las llames "inventadas" ni "irreales". Provienen de casas de apuestas reales con dinero real. Úsalas como referencia de mercado y valóralas.
+14. Si el sistema marca un partido como "posiblemente no verificado" (sin fixtureId en API-Football), ADVERTIR al usuario que la verificación del partido no fue posible, pero NUNCA anules el pronóstico ni digas que las cuotas son falsas. Presenta los datos de mercado como tales y deja que el usuario decida.
+15. NUNCA te contradigas en la misma conversación — si das un pronóstico completo y luego decides que era incorrecto, corrige con un addendum, NO anules todo y digas que los datos eran inventados. Si las cuotas de Pinnacle dicen 6.30 para un equipo, eso es lo que Pinnacle está ofreciendo — es un hecho de mercado.
 `;
 
 const ANALYSIS_TIMEOUT = 25000;
@@ -294,6 +297,40 @@ export async function POST(request) {
 
             if (detectedMatch.nationalTeams) {
               systemContent += `\n🏅 SELECCIONES NACIONALES: Ambos equipos son selecciones nacionales. El análisis se basa en ranking FIFA → modelo Elo. No hay forma reciente ni H2H disponible. ANALIZA CON TU CONOCIMIENTO TÁCTICO E HISTÓRICO sobre estas selecciones. Las probabilidades del modelo SON datos válidos — úsalas para generar tu pronóstico completo.`;
+
+              if (result.confederations) {
+                const c1 = result.confederations.team1;
+                const c2 = result.confederations.team2;
+                systemContent += `\n🏟️ CONFEDERACIONES: ${team1} = ${c1}, ${team2} = ${c2}.`;
+                if (c1 === 'CAF' || c2 === 'CAF' || c1 === 'AFC' || c2 === 'AFC' || c1 === 'OFC' || c2 === 'OFC') {
+                  systemContent += ` Aplica la REGLA CAF/AFC/OFC: datos menos fiables, alta variabilidad. Baja la confianza automáticamente UN NIVEL para equipos de estas confederaciones.`;
+                }
+                if (c1 === 'CONMEBOL' || c2 === 'CONMEBOL') {
+                  systemContent += ` Aplica la REGLA CONMEBOL: alta variabilidad, viajes largos, altitud. Menciónalo siempre.`;
+                }
+              }
+
+              if (result.isNeutralVenue) {
+                systemContent += `\n🏟️ SEDE NEUTRAL: Este partido se juega en sede neutral (no hay ventaja de local). Las probabilidades Elo calculadas NO incluyen ventaja de local para ningún equipo.`;
+              }
+
+              if (result.homeAdv === 65) {
+                systemContent += `\n🏠 PARTIDO CON VENTAJA DE LOCAL: Se detectó que es una eliminatoria. ${team1} tiene ventaja de local (+65 ELO). Tenlo en cuenta en tu análisis.`;
+              }
+            }
+
+            if (result.commence) {
+              const commenceDate = new Date(result.commence);
+              const now = new Date();
+              const daysUntil = Math.ceil((commenceDate - now) / (1000 * 60 * 60 * 24));
+              systemContent += `\n📅 FECHA DEL MERCADO: El partido está programado para ${commenceDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })} (${daysUntil > 0 ? daysUntil + ' días' : Math.abs(daysUntil) + ' días atrás'}).`;
+              if (daysUntil > 30) {
+                systemContent += ` ⚠️ El partido está a más de 30 días. Las cuotas pueden ser de un mercado especulativo y el partido puede no estar confirmado oficialmente. VERIFICA antes de recomendar.`;
+              }
+            }
+
+            if (!result.fixtureId && result.oddsApiSource === 'odds_api') {
+              systemContent += `\n\n⚠️ PARTIDO POSIBLEMENTE NO VERIFICADO: Se encontraron cuotas de mercado (Pinnacle + casas EU) pero NO se encontró el partido en API-Football. Esto puede significar: (a) es un partido de un mercado anticipado (ej. fase de grupos del Mundial publicada antes del sorteo), (b) es un cruce hipotético, o (c) el partido aún no aparece en el calendario de API-Football. PRESENTA las cuotas de mercado como DATOS DE MERCADO EXISTENTES (no las inventes), pero ADVERTIR que la verificación del partido no fue posible. NUNCA digas que las cuotas son "inventadas" — provienen de casas reales. NUNCA anules el pronóstico por esto.`;
             }
 
             systemContent += result.modelText;
@@ -301,7 +338,7 @@ export async function POST(request) {
             if (result.oddsText) {
               systemContent += result.oddsText;
             } else {
-              systemContent += `\n\n⚠️ SIN CUOTAS DE MERCADO: No se encontraron cuotas para este partido. AUN ASÍ, PROPORCIONA TU ANÁLISIS COMPLETO basándote en los datos cuantitativos del modelo y tu conocimiento. Simplemente omite "Cuota de referencia" en el pronóstico. NUNCA rechaces el análisis por falta de cuotas.`;
+              systemContent += `\n\n⚠️ SIN CUOTAS DE MERCADO: No se encontraron cuotas para este partido. AUN ASÍ, PROPORCIONA TU ANÁLISIS COMPLETO basándote en los datos cuantitativos del modelo y tu conocimiento. Simplemente omite "Cuota de referencia" en el pronóstico. NUNCA rechaces el análisis por falta de cuotas (REGLA 11).`;
             }
 
             if (result.injuriesText) {

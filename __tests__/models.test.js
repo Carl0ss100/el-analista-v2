@@ -31,21 +31,21 @@ describe('eloTo1X2', () => {
     expect(result['1']).toBeCloseTo(0.37, 1);
   });
 
-  it('Colombia vs Portugal at neutral venue favors Portugal (team2)', () => {
-    const eloCol = 2100 - 12 * 5;
-    const eloPor = 2100 - 6 * 5;
+  it('Colombia (rank 13) vs Portugal (rank 5) at neutral venue favors Portugal', () => {
+    const eloCol = 2100 - 13 * 5;
+    const eloPor = 2100 - 5 * 5;
     const result = eloTo1X2(eloCol, eloPor, 0);
     expect(result['2']).toBeGreaterThan(result['1']);
   });
 
-  it('Colombia vs Portugal with home advantage favors Colombia (team1)', () => {
-    const eloCol = 2100 - 12 * 5;
-    const eloPor = 2100 - 6 * 5;
+  it('Colombia vs Portugal with home advantage favors Colombia', () => {
+    const eloCol = 2100 - 13 * 5;
+    const eloPor = 2100 - 5 * 5;
     const result = eloTo1X2(eloCol, eloPor, 65);
     expect(result['1']).toBeGreaterThan(result['2']);
   });
 
-  it('sum of 1X2 probs equals 1 (or close due to rounding)', () => {
+  it('sum of 1X2 probs equals 1', () => {
     const result = eloTo1X2(1800, 1900, 0);
     expect(result['1'] + result['X'] + result['2']).toBeCloseTo(1, 2);
   });
@@ -53,5 +53,25 @@ describe('eloTo1X2', () => {
   it('away team proportionally reflecs eAway at neutral venue', () => {
     const result = eloTo1X2(1800, 2000, 0);
     expect(result['2']).toBeGreaterThan(result['1']);
+  });
+
+  it('South Africa (rank 60) vs Canada (rank 30) at neutral venue favors Canada', () => {
+    const eloSA = 2100 - 60 * 5;
+    const eloCA = 2100 - 30 * 5;
+    const result = eloTo1X2(eloSA, eloCA, 0);
+    expect(result['2']).toBeGreaterThan(result['1']);
+  });
+
+  it('home advantage inflates home team probability vs neutral venue', () => {
+    const eloSA = 2100 - 60 * 5;
+    const eloCA = 2100 - 30 * 5;
+    const neutral = eloTo1X2(eloSA, eloCA, 0);
+    const withHome = eloTo1X2(eloSA, eloCA, 65);
+    expect(withHome['1']).toBeGreaterThan(neutral['1']);
+  });
+
+  it('neutral venue does not add home bias', () => {
+    const result = eloTo1X2(2000, 2000, 0);
+    expect(result['1']).toBeCloseTo(result['2'], 4);
   });
 });
