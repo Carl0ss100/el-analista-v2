@@ -160,7 +160,7 @@ Si el usuario define su bankroll con !bankroll [X]:
 15. NUNCA te contradigas en la misma conversación — si das un pronóstico completo y luego decides que era incorrecto, corrige con un addendum, NO anules todo y digas que los datos eran inventados. Si las cuotas de Pinnacle dicen 6.30 para un equipo, eso es lo que Pinnacle está ofreciendo — es un hecho de mercado.
 `;
 
-const ANALYSIS_TIMEOUT = 25000;
+const ANALYSIS_TIMEOUT = 30000;
 
 export async function POST(request) {
   try {
